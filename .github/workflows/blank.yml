@@ -1,0 +1,104 @@
+name: veracode-scan-java
+on: 
+  push:
+   branches:
+     - develop
+ 
+   pull_request:
+     types: [opened, edited]
+    
+     workflow_dispatch:
+     
+defaults:
+  run:
+    shell: bash
+    working-directory: .
+
+env:
+  APP_NAME: ${{ github.repository }}
+
+jobs:
+  sast-sca-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin' # See 'Supported distributions' for available options
+          java-version: '17'
+      
+      # CREATE SETTINGS
+      - name: Maven Settings
+        uses: whelk-io/maven-settings-xml-action@v20
+        with:
+          mirrors: >
+            [
+              {
+                "id": "repo",
+                "mirrorOf": "*",
+                "url": "https://repo.amlab7.com/repository/maven-public/"
+              }
+            ]
+          servers: >
+            [
+              {
+                "id": "repo",
+                "username": "${{ secrets.NEXUS_USER }}",
+                "password": "${{ secrets.NEXUS_PASS }}"
+              },
+              {
+                "id": "releases",
+                "username": "${{ secrets.NEXUS_USER }}",
+                "password": "${{ secrets.NEXUS_PASS }}"
+              },
+              {
+                "id": "snapshots",
+                "username": "${{ secrets.NEXUS_USER }}",
+                "password": "${{ secrets.NEXUS_PASS }}"
+              }
+            ]
+          repositories: >
+            [
+              {
+                "id": "releases",
+                "name": "Aeromexico Releases Repository",
+                "url": "https://repo.amlab7.com/repository/maven-releases/",
+                "releases": {
+                  "enabled": "true",
+                  "checksumPolicy": "fail"
+                },
+                "snapshots": {
+                  "enabled": "false"
+                }
+              },
+              {
+                "id": "snapshots",
+                "name": "Aeromexico Snapshots Repository",
+                "url": "https://repo.amlab7.com/repository/maven-snapshots/",
+                "releases": {
+                  "enabled": "false"
+                },
+                "snapshots": {
+                  "enabled": "true",
+                  "checksumPolicy": "fail"
+                }
+              }
+            ]
+          active_profiles: >
+            [
+              "github"
+            ]
+          output_file: .m2/settings.xml
+
+      # COMPILE CODE
+      - name: Build with Maven
+        run: mvn package --quiet --settings .m2/settings.xml --file pom_veracode.xml -Dmaven.test.skip
+
+      # VERACODE SETUP AND SCAN
+      - name: Set up Veracode API Wrapper
+        run: wget https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.3.11.0/vosp-api-wrappers-java-23.3.11.0-dist.zip -O VeracodeJAPI.zip
+      - name: Unzip the Pipeline Scanner
+        run: unzip VeracodeJAPI.zip
+      - name: Run Pipeline Scanner
+        run: java -Dpipeline.debug=true -jar ./VeracodeJavaAPI.jar -action uploadandscan -vid "${{ secrets.VERACODE_API_ID }}" -vkey "${{ secrets.VERACODE_API_KEY }}" -createprofile false -appname "$APP_NAME"  -filepath target/*.jar -version $(date --date="6 hours ago" '+%d%m%Y-%H%M') -selectedpreviously true
